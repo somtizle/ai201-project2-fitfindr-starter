@@ -136,11 +136,6 @@ sneakers, oversized denim jacket, black beanie)
 **Outfit suggestion:** "Pair the faded band tee with your baggy wide-leg jeans and chunky platform sneakers. Keep the silhouette balanced — if the new piece is boxy, let the rest sit closer to the body. (Offline styling suggestion.)"
 **Fit card (LLM, representative):** "thrifted this faded band tee off depop for $22 and it's already my favorite thing in the rotation 🖤 (offline caption)"
 
-> The outfit suggestion and fit card are produced by Groq's
-> `llama-3.3-70b-versatile`, so the exact wording varies per run; the examples
-> above are representative. Everything else here (the log, the listing, the
-> price-check string) is verbatim from a real run. With no API key, those two
-> lines fall back to a deterministic suggestion/caption instead.
 
 ## Spec reflection
 
