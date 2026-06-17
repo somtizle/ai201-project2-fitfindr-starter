@@ -132,9 +132,9 @@ sneakers, oversized denim jacket, black beanie)
 • Called create_fit_card with the outfit suggestion and the item.
 ```
 **Listing found:** Faded Band Tee — $22, Depop, Good condition, size M.
-**Price check (actual):** "$22 vs a median of $22 across 4 comparable tee listings — fair."
-**Outfit suggestion (LLM, representative):** "Pair the faded band tee with your baggy wide-leg jeans and chunky platform sneakers, then layer the oversized denim jacket over the top. Half-tuck the front of the tee so the jeans' high rise shows."
-**Fit card (LLM, representative):** "thrifted this faded band tee off depop for $22 and it was made for my wide-legs 🖤"
+**Price check (actual):** "$22 vs a median of $22 across 4 comparable tee listings — fair. Vintage faded graphic band tee with cracked screen print. Soft, broken-in cotton with a relaxed boxy fit."
+**Outfit suggestion:** "Pair the faded band tee with your baggy wide-leg jeans and chunky platform sneakers. Keep the silhouette balanced — if the new piece is boxy, let the rest sit closer to the body. (Offline styling suggestion.)"
+**Fit card (LLM, representative):** "thrifted this faded band tee off depop for $22 and it's already my favorite thing in the rotation 🖤 (offline caption)"
 
 > The outfit suggestion and fit card are produced by Groq's
 > `llama-3.3-70b-versatile`, so the exact wording varies per run; the examples
