@@ -1,15 +1,12 @@
 """
-app.py
+app.py — FitFindr Gradio interface.
 
-Gradio interface for FitFindr. The layout and wiring are already set up —
-your job is to fill in handle_query() so it calls run_agent() and maps
-the session results to the three output panels.
+One text box for the request, a wardrobe selector (so you can demo both the
+populated-wardrobe and empty-wardrobe paths), and five output panels that map
+directly to the agent's session dict: the listing it picked, the price check,
+the outfit suggestion, the shareable fit card, and the agent's decision log.
 
-Run with:
-    python app.py
-
-Then open the localhost URL shown in your terminal (usually http://localhost:7860,
-but check your terminal — the port may differ).
+Run:  python app.py   ->  open the URL it prints (usually http://localhost:7860)
 """
 
 import gradio as gr
@@ -18,106 +15,61 @@ from agent import run_agent
 from utils.data_loader import get_example_wardrobe, get_empty_wardrobe
 
 
-# ── query handler ─────────────────────────────────────────────────────────────
+def handle_query(question, wardrobe_choice):
+    """Call the agent and map its session dict to the five output panels."""
+    wardrobe = get_empty_wardrobe() if wardrobe_choice == "Empty wardrobe" else get_example_wardrobe()
+    session = run_agent(question, wardrobe=wardrobe)
 
-def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str]:
-    """
-    Called by Gradio when the user submits a query.
+    decision_log = "\n".join(f"• {line}" for line in session["log"])
 
-    Args:
-        user_query:     The text the user typed into the search box.
-        wardrobe_choice: Either "Example wardrobe" or "Empty wardrobe (new user)".
+    # Error branch: the agent stopped early. Show the message, leave the rest empty.
+    if session["error"]:
+        return (f"⚠️ {session['error']}", "—", "—", "—", decision_log)
 
-    Returns:
-        A tuple of three strings:
-            (listing_text, outfit_suggestion, fit_card)
-        Each string maps to one of the three output panels in the UI.
+    item = session["selected_item"]
+    listing = (f"{item['title']} — ${item['price']:.0f}\n"
+               f"{item['platform']} · {item['condition']} condition · size {item['size']}\n"
+               f"{item['description']}")
+    if session["adjustments"]:
+        listing += f"\n\n(Found after I {'; '.join(session['adjustments'])}.)"
 
-    TODO:
-        1. Guard against an empty query (return early with an error message).
-        2. Select the wardrobe based on wardrobe_choice.
-        3. Call run_agent() with the query and selected wardrobe.
-        4. If session["error"] is set, return the error in the first panel
-           and empty strings for the other two.
-        5. Otherwise, format session["selected_item"] into a readable listing_text
-           string and return it along with session["outfit_suggestion"] and
-           session["fit_card"].
-    """
-    # TODO: implement this function
-    return "Agent not yet implemented.", "", ""
+    price = session["price_assessment"]["message"] if session["price_assessment"] else "—"
+    outfit = session["outfit_suggestion"] or "—"
+    fit_card = session["fit_card"] or "—"
+    return listing, price, outfit, fit_card, decision_log
 
 
-# ── interface ─────────────────────────────────────────────────────────────────
-
-EXAMPLE_QUERIES = [
-    "vintage graphic tee under $30",
-    "90s track jacket in size M",
-    "flowy midi skirt under $40",
-    "black combat boots size 8",
-    "designer ballgown size XXS under $5",   # deliberate no-results test
-]
-
-def build_interface():
-    with gr.Blocks(title="FitFindr") as demo:
-        gr.Markdown("""
-# FitFindr 🛍️
-Find secondhand pieces and get outfit ideas based on your wardrobe.
-Describe what you're looking for — include size and price if you want to filter.
-        """)
-
-        with gr.Row():
-            query_input = gr.Textbox(
-                label="What are you looking for?",
-                placeholder="e.g. vintage graphic tee under $30, size M",
-                lines=2,
-                scale=3,
-            )
-            wardrobe_choice = gr.Radio(
-                choices=["Example wardrobe", "Empty wardrobe (new user)"],
-                value="Example wardrobe",
-                label="Wardrobe",
-                scale=1,
-            )
-
-        submit_btn = gr.Button("Find it", variant="primary")
-
-        with gr.Row():
-            listing_output = gr.Textbox(
-                label="🛍️ Top listing found",
-                lines=8,
-                interactive=False,
-            )
-            outfit_output = gr.Textbox(
-                label="👗 Outfit idea",
-                lines=8,
-                interactive=False,
-            )
-            fitcard_output = gr.Textbox(
-                label="✨ Your fit card",
-                lines=8,
-                interactive=False,
-            )
-
-        gr.Examples(
-            examples=[[q, "Example wardrobe"] for q in EXAMPLE_QUERIES],
-            inputs=[query_input, wardrobe_choice],
-            label="Try these queries",
+with gr.Blocks(title="FitFindr") as demo:
+    gr.Markdown(
+        "# FitFindr — your thrifting sidekick\n"
+        "Describe what you're hunting for (e.g. *\"vintage graphic tee under "
+        "$30, size M\"*). FitFindr searches the listings, checks the price, "
+        "styles it against your wardrobe, and writes a shareable caption."
+    )
+    with gr.Row():
+        question = gr.Textbox(
+            label="What are you looking for?",
+            placeholder="vintage graphic tee under $30, size M",
+            scale=4,
         )
-
-        submit_btn.click(
-            fn=handle_query,
-            inputs=[query_input, wardrobe_choice],
-            outputs=[listing_output, outfit_output, fitcard_output],
+        wardrobe_choice = gr.Radio(
+            ["Example wardrobe", "Empty wardrobe"],
+            value="Example wardrobe",
+            label="Wardrobe",
+            scale=1,
         )
-        query_input.submit(
-            fn=handle_query,
-            inputs=[query_input, wardrobe_choice],
-            outputs=[listing_output, outfit_output, fitcard_output],
-        )
+    btn = gr.Button("Find my fit", variant="primary")
 
-    return demo
+    listing_out = gr.Textbox(label="🛍️ Listing found", lines=5)
+    price_out = gr.Textbox(label="💰 Price check", lines=2)
+    outfit_out = gr.Textbox(label="🧥 Outfit suggestion", lines=4)
+    fitcard_out = gr.Textbox(label="✨ Fit card (shareable caption)", lines=3)
+    log_out = gr.Textbox(label="🧠 What the agent did (decision log)", lines=8)
+
+    outputs = [listing_out, price_out, outfit_out, fitcard_out, log_out]
+    btn.click(handle_query, inputs=[question, wardrobe_choice], outputs=outputs)
+    question.submit(handle_query, inputs=[question, wardrobe_choice], outputs=outputs)
 
 
 if __name__ == "__main__":
-    demo = build_interface()
     demo.launch()

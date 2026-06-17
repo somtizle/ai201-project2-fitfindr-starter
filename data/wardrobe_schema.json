@@ -1,106 +1,50 @@
 {
-  "_description": "This file defines the wardrobe schema your agent will use. The 'example_wardrobe' shows a sample user's closet. Your suggest_outfit tool should accept a wardrobe in this format.",
-
-  "schema": {
-    "items": [
-      {
-        "id": "string — unique identifier for this item",
-        "name": "string — short description of the piece",
-        "category": "string — one of: tops, bottoms, outerwear, shoes, accessories",
-        "colors": ["string — list of colors this item contains"],
-        "style_tags": ["string — list of style descriptors"],
-        "notes": "string (optional) — any notes about fit, how the user styles it, etc."
-      }
-    ]
+  "description": "Schema for a user's existing wardrobe. A wardrobe is an object with an 'items' list. Each item describes one piece the user already owns, so suggest_outfit can pair a new listing against real pieces.",
+  "item_fields": {
+    "id": "string — unique id for the wardrobe item",
+    "type": "string — garment type, e.g. 'jeans', 'sneakers', 'jacket', 'tee'",
+    "descriptor": "string — short natural-language description used in styling prompts, e.g. 'baggy wide-leg jeans'",
+    "colors": "array of strings — dominant colors",
+    "style_tags": "array of strings — style descriptors, e.g. ['90s', 'streetwear']",
+    "fit": "string — fit/silhouette, e.g. 'baggy', 'fitted', 'oversized'"
   },
-
   "example_wardrobe": {
     "items": [
       {
-        "id": "w_001",
-        "name": "Baggy straight-leg jeans, dark wash",
-        "category": "bottoms",
-        "colors": ["dark blue", "indigo"],
-        "style_tags": ["denim", "streetwear", "baggy"],
-        "notes": "High-waisted, sits above the hip"
+        "id": "W1",
+        "type": "jeans",
+        "descriptor": "baggy wide-leg jeans",
+        "colors": ["blue"],
+        "style_tags": ["90s", "streetwear", "casual"],
+        "fit": "baggy"
       },
       {
-        "id": "w_002",
-        "name": "Wide-leg khaki trousers",
-        "category": "bottoms",
-        "colors": ["khaki", "tan"],
-        "style_tags": ["earth tones", "minimal", "wide-leg"],
-        "notes": null
-      },
-      {
-        "id": "w_003",
-        "name": "White ribbed tank top",
-        "category": "tops",
+        "id": "W2",
+        "type": "sneakers",
+        "descriptor": "chunky platform sneakers",
         "colors": ["white"],
-        "style_tags": ["basics", "minimal", "fitted"],
-        "notes": "Goes with everything"
+        "style_tags": ["y2k", "chunky"],
+        "fit": "chunky"
       },
       {
-        "id": "w_004",
-        "name": "Oversized grey crewneck sweatshirt",
-        "category": "tops",
-        "colors": ["grey", "charcoal"],
-        "style_tags": ["oversized", "basics", "cozy"],
-        "notes": "Really oversized — drops below the hip"
+        "id": "W3",
+        "type": "jacket",
+        "descriptor": "oversized denim trucker jacket",
+        "colors": ["blue"],
+        "style_tags": ["vintage", "90s"],
+        "fit": "oversized"
       },
       {
-        "id": "w_005",
-        "name": "Black cropped zip hoodie",
-        "category": "tops",
+        "id": "W4",
+        "type": "beanie",
+        "descriptor": "ribbed black beanie",
         "colors": ["black"],
-        "style_tags": ["athletic", "streetwear", "cropped"],
-        "notes": null
-      },
-      {
-        "id": "w_006",
-        "name": "Vintage black denim jacket",
-        "category": "outerwear",
-        "colors": ["black"],
-        "style_tags": ["denim", "vintage", "classic"],
-        "notes": "Slightly cropped"
-      },
-      {
-        "id": "w_007",
-        "name": "Chunky white sneakers",
-        "category": "shoes",
-        "colors": ["white"],
-        "style_tags": ["sneakers", "chunky", "streetwear"],
-        "notes": null
-      },
-      {
-        "id": "w_008",
-        "name": "Black combat boots",
-        "category": "shoes",
-        "colors": ["black"],
-        "style_tags": ["boots", "grunge", "classic"],
-        "notes": "Lace-up, mid-ankle height"
-      },
-      {
-        "id": "w_009",
-        "name": "Brown leather belt",
-        "category": "accessories",
-        "colors": ["brown"],
-        "style_tags": ["classic", "earth tones", "accessories"],
-        "notes": null
-      },
-      {
-        "id": "w_010",
-        "name": "Black crossbody bag",
-        "category": "accessories",
-        "colors": ["black"],
-        "style_tags": ["minimal", "accessories", "everyday"],
-        "notes": null
+        "style_tags": ["casual", "streetwear"],
+        "fit": "snug"
       }
     ]
   },
-
   "empty_wardrobe": {
-    "_note": "Use this as the starting template for a new user with no wardrobe entered yet.",
     "items": []
   }
 }

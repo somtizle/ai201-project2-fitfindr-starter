@@ -1,137 +1,295 @@
 """
-tools.py
+tools.py — FitFindr's tools.
 
-The three required FitFindr tools. Each tool is a standalone function that
-can be called and tested independently before being wired into the agent loop.
-
-Complete and test each tool before moving to agent.py.
+Each tool has a clearly defined signature, a single job, and its own failure
+handling. Two tools are deterministic (search_listings, estimate_price_fairness)
+and two call the Groq LLM (suggest_outfit, create_fit_card). The LLM tools
+degrade gracefully: if Groq is unreachable or no key is set, they fall back to a
+deterministic response rather than crashing, so the agent stays useful.
 
 Tools:
-    search_listings(description, size, max_price)  → list[dict]
-    suggest_outfit(new_item, wardrobe)              → str
-    create_fit_card(outfit, new_item)               → str
+  search_listings(description, size, max_price)   -> list[dict]
+  suggest_outfit(new_item, wardrobe)              -> str
+  create_fit_card(outfit, new_item)               -> str
+  estimate_price_fairness(item, listings=None)    -> dict   (stretch tool)
 """
 
 import os
+import re
+import statistics
 
 from dotenv import load_dotenv
-from groq import Groq
-
 from utils.data_loader import load_listings
 
-load_dotenv()
+load_dotenv()  # read GROQ_API_KEY from .env
+
+LLM_MODEL = "llama-3.3-70b-versatile"
+
+# Words we ignore when scoring search relevance — they carry no signal.
+_STOPWORDS = {
+    "the", "a", "an", "for", "and", "with", "under", "size", "looking",
+    "want", "need", "find", "me", "some", "im", "i'm", "that", "this",
+    "really", "kind", "of", "in", "to", "my",
+}
 
 
-# ── Groq client ───────────────────────────────────────────────────────────────
-
-def _get_groq_client():
-    """Initialize and return a Groq client using GROQ_API_KEY from .env."""
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        raise ValueError(
-            "GROQ_API_KEY not set. Add it to a .env file in the project root."
-        )
-    return Groq(api_key=api_key)
-
-
-# ── Tool 1: search_listings ───────────────────────────────────────────────────
-
-def search_listings(
-    description: str,
-    size: str | None = None,
-    max_price: float | None = None,
-) -> list[dict]:
-    """
-    Search the mock listings dataset for items matching the description,
-    optional size, and optional price ceiling.
+# ---------------------------------------------------------------------------
+# Tool 1: search_listings  (deterministic)
+# ---------------------------------------------------------------------------
+def search_listings(description, size=None, max_price=None):
+    """Search the mock listings dataset and return matching items.
 
     Args:
-        description: Keywords describing what the user is looking for
-                     (e.g., "vintage graphic tee").
-        size:        Size string to filter by, or None to skip size filtering.
-                     Matching is case-insensitive (e.g., "M" matches "S/M").
-        max_price:   Maximum price (inclusive), or None to skip price filtering.
+        description (str): free-text description, e.g. "vintage graphic tee".
+            Tokenized and matched against each listing's title, description,
+            style_tags, category, and brand.
+        size (str | None): exact size to require, e.g. "M" or "32". None = any.
+        max_price (float | None): inclusive price ceiling. None = no ceiling.
 
     Returns:
-        A list of matching listing dicts, sorted by relevance (best match first).
-        Returns an empty list if nothing matches — does NOT raise an exception.
+        list[dict]: matching listing dicts (each with the original fields plus a
+        "relevance" int), sorted by relevance desc then price asc. Returns an
+        empty list [] when nothing matches — never raises for "no results".
 
-    Each listing dict has the following fields:
-        id, title, description, category, style_tags (list), size,
-        condition, price (float), colors (list), brand, platform
-
-    TODO:
-        1. Load all listings with load_listings().
-        2. Filter by max_price and size (if provided).
-        3. Score each remaining listing by keyword overlap with `description`.
-        4. Drop any listings with a score of 0 (no relevant matches).
-        5. Sort by score, highest first, and return the listing dicts.
-
-    Before writing code, fill in the Tool 1 section of planning.md.
+    Failure mode: no matches -> returns []. The agent is responsible for telling
+    the user and (optionally) retrying with loosened constraints.
     """
-    # Replace this with your implementation
-    return []
+    listings = load_listings()
+
+    # Tokenize the query into meaningful words.
+    tokens = [t for t in re.findall(r"[a-z0-9']+", (description or "").lower())
+              if t not in _STOPWORDS and len(t) >= 2]
+
+    matches = []
+    for item in listings:
+        # Hard filters first.
+        if size is not None and str(item.get("size", "")).lower() != str(size).lower():
+            continue
+        if max_price is not None and item.get("price", 0) > max_price:
+            continue
+
+        # Relevance = how many query tokens appear in the item's searchable text.
+        haystack = " ".join([
+            item.get("title", ""),
+            item.get("description", ""),
+            " ".join(item.get("style_tags", [])),
+            item.get("category", ""),
+            item.get("brand", ""),
+        ]).lower()
+        relevance = sum(1 for t in tokens if t in haystack)
+
+        # If the user gave a description, require at least one token to hit.
+        # If the description was empty, every size/price match counts.
+        if tokens and relevance == 0:
+            continue
+
+        item_copy = dict(item)
+        item_copy["relevance"] = relevance
+        matches.append(item_copy)
+
+    matches.sort(key=lambda x: (-x["relevance"], x["price"]))
+    return matches
 
 
-# ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Groq helper shared by the two LLM tools
+# ---------------------------------------------------------------------------
+def _chat(system_prompt, user_prompt, temperature):
+    """Call Groq and return the message text. Raises on any failure so the
+    caller's try/except can fall back."""
+    key = os.environ.get("GROQ_API_KEY")  # check first so the deterministic
+    if not key:                            # tools/tests need neither a key nor
+        raise RuntimeError("GROQ_API_KEY not set")  # the groq package installed
+    from groq import Groq  # imported lazily
+    client = Groq(api_key=key)
+    completion = client.chat.completions.create(
+        model=LLM_MODEL,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=temperature,
+    )
+    return completion.choices[0].message.content.strip()
 
-def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
-    """
-    Given a thrifted item and the user's wardrobe, suggest 1–2 complete outfits.
+
+# ---------------------------------------------------------------------------
+# Tool 2: suggest_outfit  (LLM, with deterministic fallback)
+# ---------------------------------------------------------------------------
+def suggest_outfit(new_item, wardrobe):
+    """Suggest one complete outfit pairing a new item with the user's wardrobe.
 
     Args:
-        new_item: A listing dict (the item the user is considering buying).
-        wardrobe: A wardrobe dict with an 'items' key containing a list of
-                  wardrobe item dicts. May be empty — handle this gracefully.
+        new_item (dict): a listing dict (as returned by search_listings).
+        wardrobe (dict): {"items": [ {type, descriptor, colors, style_tags,
+            fit}, ... ]}. May be empty.
 
     Returns:
-        A non-empty string with outfit suggestions.
-        If the wardrobe is empty, offer general styling advice for the item
-        rather than raising an exception or returning an empty string.
+        str: a 2-3 sentence styling suggestion. Always a non-empty string.
 
-    TODO:
-        1. Check whether wardrobe['items'] is empty.
-        2. If empty: call the LLM with a prompt for general styling ideas
-           (what kinds of items pair well, what vibe it suits, etc.).
-        3. If not empty: format the wardrobe items into a prompt and ask
-           the LLM to suggest specific outfit combinations using the new item
-           and named pieces from the wardrobe.
-        4. Return the LLM's response as a string.
-
-    Before writing code, fill in the Tool 2 section of planning.md.
+    Failure modes:
+      - Empty wardrobe: returns general styling advice built around the item
+        (and says so), rather than crashing.
+      - LLM/network/key error: returns a deterministic rule-based suggestion so
+        the agent stays useful.
     """
-    # Replace this with your implementation
-    return ""
+    items = (wardrobe or {}).get("items", [])
+    tags = ", ".join(new_item.get("style_tags", [])) or "versatile"
+    system = ("You are a sharp, encouraging personal stylist for secondhand "
+              "fashion. Be concrete and concise — name specific pieces.")
+
+    try:
+        if items:
+            wardrobe_desc = "; ".join(
+                f"{i.get('descriptor', i.get('type', 'item'))}"
+                f" ({', '.join(i.get('colors', []))})" for i in items
+            )
+            user = (
+                f"New find: {new_item['title']} — {new_item['description']} "
+                f"(style: {tags}). My wardrobe: {wardrobe_desc}. "
+                "Suggest ONE complete outfit that pairs the new find with "
+                "specific pieces from my wardrobe. 2-3 sentences, name which of "
+                "my pieces to wear, and give one concrete styling tip."
+            )
+        else:
+            user = (
+                f"New find: {new_item['title']} — {new_item['description']} "
+                f"(style: {tags}). You don't know what's in my wardrobe yet. "
+                "Suggest ONE complete outfit built around this find using common "
+                "staples. 2-3 sentences, one styling tip, and note that these "
+                "are general ideas since you don't know my wardrobe yet."
+            )
+        return _chat(system, user, temperature=0.7)
+    except Exception as exc:
+        return _fallback_outfit(new_item, items, reason=str(exc))
 
 
-# ── Tool 3: create_fit_card ───────────────────────────────────────────────────
+def _fallback_outfit(new_item, items, reason=""):
+    """Deterministic styling suggestion used when the LLM is unavailable."""
+    title = new_item.get("title", "this piece")
+    if items:
+        pieces = [i.get("descriptor", i.get("type", "")) for i in items]
+        bottoms = next((p for p in pieces if "jean" in p or "pant" in p or "skirt" in p), pieces[0])
+        shoes = next((p for p in pieces if "sneaker" in p or "boot" in p or "shoe" in p), None)
+        suggestion = f"Pair the {title.lower()} with your {bottoms}"
+        if shoes:
+            suggestion += f" and {shoes}"
+        suggestion += ". Keep the silhouette balanced — if the new piece is boxy, let the rest sit closer to the body. (Offline styling suggestion.)"
+        return suggestion
+    return (
+        f"Build around the {title.lower()}: anchor it with simple staples like "
+        "well-fitting jeans and clean sneakers, then add one layer (a jacket or "
+        "overshirt) for shape. These are general ideas since no wardrobe was "
+        "provided yet. (Offline styling suggestion.)"
+    )
 
-def create_fit_card(outfit: str, new_item: dict) -> str:
-    """
-    Generate a short, shareable outfit caption for the thrifted find.
+
+# ---------------------------------------------------------------------------
+# Tool 3: create_fit_card  (LLM, with guard + deterministic fallback)
+# ---------------------------------------------------------------------------
+def create_fit_card(outfit, new_item):
+    """Generate a short, shareable caption for a complete outfit.
 
     Args:
-        outfit:   The outfit suggestion string from suggest_outfit().
-        new_item: The listing dict for the thrifted item.
+        outfit (str): the styling suggestion (from suggest_outfit).
+        new_item (dict): the listing dict the outfit is built around.
 
     Returns:
-        A 2–4 sentence string usable as an Instagram/TikTok caption.
-        If outfit is empty or missing, return a descriptive error message
-        string — do NOT raise an exception.
+        str: a casual, social-media-style caption. Varies for different inputs.
 
-    The caption should:
-    - Feel casual and authentic (like a real OOTD post, not a product description)
-    - Mention the item name, price, and platform naturally (once each)
-    - Capture the outfit vibe in specific terms
-    - Sound different each time for different inputs (use higher LLM temperature)
-
-    TODO:
-        1. Guard against an empty or whitespace-only outfit string.
-        2. Build a prompt that gives the LLM the item details and the outfit,
-           and asks for a caption matching the style guidelines above.
-        3. Call the LLM and return the response.
-
-    Before writing code, fill in the Tool 3 section of planning.md.
+    Failure modes:
+      - Empty/blank outfit: returns a clear error message string (does NOT call
+        the LLM and does NOT crash).
+      - LLM/network/key error: returns a deterministic templated caption.
     """
-    # Replace this with your implementation
-    return ""
+    if not outfit or not outfit.strip():
+        return ("[fit card unavailable] No outfit was provided, so there's "
+                "nothing to caption. Try generating an outfit suggestion first.")
+
+    title = new_item.get("title", "this piece")
+    platform = new_item.get("platform", "")
+    price = new_item.get("price")
+    system = ("You write short, fun, first-person social captions for thrifted "
+              "outfits — the kind someone posts with a mirror pic. Lowercase, "
+              "casual, 1-2 sentences, at most one emoji. No hashtag spam.")
+    user = (
+        f"Item: {title}"
+        + (f" (${price:.0f} on {platform})" if price is not None else "")
+        + f". The look: {outfit}. Write one caption."
+    )
+    try:
+        return _chat(system, user, temperature=0.95)  # high temp = varied output
+    except Exception:
+        return _fallback_fit_card(new_item)
+
+
+def _fallback_fit_card(new_item):
+    """Deterministic caption used when the LLM is unavailable. Varies by item."""
+    title = new_item.get("title", "this piece").lower()
+    platform = new_item.get("platform", "the app")
+    price = new_item.get("price")
+    deal = f" for ${price:.0f}" if price is not None else ""
+    return (f"thrifted this {title} off {platform.lower()}{deal} and it's "
+            "already my favorite thing in the rotation 🖤 (offline caption)")
+
+
+# ---------------------------------------------------------------------------
+# Tool 4: estimate_price_fairness  (deterministic stretch tool)
+# ---------------------------------------------------------------------------
+def estimate_price_fairness(item, listings=None):
+    """Judge whether an item's price is fair vs. comparable listings.
+
+    Args:
+        item (dict): a listing dict (must have "category" and "price").
+        listings (list[dict] | None): the pool to compare against. Defaults to
+            the full dataset via load_listings().
+
+    Returns:
+        dict: {
+          "verdict": "great deal" | "fair" | "slightly high" | "overpriced" | "unknown",
+          "item_price": float,
+          "median_price": float | None,
+          "comparable_count": int,
+          "message": str
+        }
+
+    Failure mode: fewer than 2 comparable listings -> verdict "unknown" with an
+    explanatory message, rather than dividing by zero or guessing.
+    """
+    if listings is None:
+        listings = load_listings()
+
+    category = item.get("category")
+    price = item.get("price")
+    comps = [l for l in listings
+             if l.get("category") == category and l.get("id") != item.get("id")]
+
+    if price is None or len(comps) < 2:
+        return {
+            "verdict": "unknown",
+            "item_price": price,
+            "median_price": None,
+            "comparable_count": len(comps),
+            "message": (f"Not enough comparable {category or 'similar'} listings "
+                        "to judge this price."),
+        }
+
+    median = statistics.median(l["price"] for l in comps)
+    ratio = price / median if median else 1.0
+    if ratio <= 0.85:
+        verdict = "great deal"
+    elif ratio <= 1.10:
+        verdict = "fair"
+    elif ratio <= 1.30:
+        verdict = "slightly high"
+    else:
+        verdict = "overpriced"
+
+    return {
+        "verdict": verdict,
+        "item_price": price,
+        "median_price": median,
+        "comparable_count": len(comps),
+        "message": (f"${price:.0f} vs a median of ${median:.0f} across "
+                    f"{len(comps)} comparable {category} listings — {verdict}."),
+    }

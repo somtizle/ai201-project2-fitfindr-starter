@@ -1,83 +1,49 @@
 """
-Utility functions for loading the mock listings dataset and wardrobe schema.
-Use these in your tool implementations to access the data without re-reading
-the files each time.
+data_loader.py — helpers for loading the mock data.
+
+The tools and agent should use these functions rather than reading the JSON
+files directly, so there's one place that knows where the data lives and what
+shape it has.
 """
 
 import json
 import os
-from typing import Optional
 
-# Resolve the path to the data directory relative to this file
-_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+# Absolute path to the data/ folder, resolved relative to THIS file so the
+# loaders work no matter what directory the app/agent is launched from.
+_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+_LISTINGS_PATH = os.path.join(_DATA_DIR, "listings.json")
+_WARDROBE_SCHEMA_PATH = os.path.join(_DATA_DIR, "wardrobe_schema.json")
 
 
-def load_listings() -> list[dict]:
+def load_listings():
+    """Return the full list of listing dicts from data/listings.json.
+
+    Each listing has: id, title, description, category, style_tags (list),
+    size, condition, price (float), colors (list), brand, platform.
     """
-    Load all mock listings from the dataset.
-
-    Returns:
-        A list of listing dictionaries. Each listing has the following fields:
-        - id (str)
-        - title (str)
-        - description (str)
-        - category (str): one of tops, bottoms, outerwear, shoes, accessories
-        - style_tags (list[str])
-        - size (str)
-        - condition (str): excellent, good, or fair
-        - price (float)
-        - colors (list[str])
-        - brand (str or None)
-        - platform (str): depop, thredUp, or poshmark
-    """
-    path = os.path.join(_DATA_DIR, "listings.json")
-    with open(path, "r", encoding="utf-8") as f:
+    with open(_LISTINGS_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def load_wardrobe_schema() -> dict:
-    """
-    Load the wardrobe schema, including the example wardrobe and empty template.
-
-    Returns:
-        A dictionary containing:
-        - schema: the field definitions for a wardrobe item
-        - example_wardrobe: a sample wardrobe with 10 items
-        - empty_wardrobe: a starting template for a new user
-    """
-    path = os.path.join(_DATA_DIR, "wardrobe_schema.json")
-    with open(path, "r", encoding="utf-8") as f:
+def _load_wardrobe_schema():
+    with open(_WARDROBE_SCHEMA_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def get_example_wardrobe() -> dict:
+def get_example_wardrobe():
+    """Return a populated example wardrobe: {"items": [ {item}, ... ]}.
+
+    Use this when testing the normal styling path — suggest_outfit can pair a
+    new item against these pieces.
     """
-    Convenience function — returns just the example wardrobe items list.
+    return _load_wardrobe_schema()["example_wardrobe"]
 
-    Returns:
-        A wardrobe dict with an 'items' key containing a list of wardrobe items.
+
+def get_empty_wardrobe():
+    """Return an empty wardrobe: {"items": []}.
+
+    Use this to test suggest_outfit's empty-wardrobe failure mode — the agent
+    must still return general styling advice instead of crashing.
     """
-    schema = load_wardrobe_schema()
-    return schema["example_wardrobe"]
-
-
-def get_empty_wardrobe() -> dict:
-    """
-    Convenience function — returns an empty wardrobe template.
-
-    Returns:
-        A wardrobe dict with an empty 'items' list.
-    """
-    schema = load_wardrobe_schema()
-    return schema["empty_wardrobe"]
-
-
-# --- Quick sanity check ---
-if __name__ == "__main__":
-    listings = load_listings()
-    print(f"Loaded {len(listings)} listings.")
-    print(f"First listing: {listings[0]['title']} — ${listings[0]['price']}")
-
-    wardrobe = get_example_wardrobe()
-    print(f"\nExample wardrobe has {len(wardrobe['items'])} items.")
-    print(f"First item: {wardrobe['items'][0]['name']}")
+    return {"items": []}
